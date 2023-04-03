@@ -1,0 +1,253 @@
+---
+title: "wine_prediction - regresion"
+author: "Wiktoria Gąsior"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+install.packages("tidyverse")
+install.packages("ggplot2")
+install.packages("corrplot")
+install.packages('ggcorrplot')
+install.packages("corrplot")
+install.packages("FSA")
+install.packages("car")
+install.packages("rstatix")
+install.packages("lmtest")
+
+```
+
+```{r}
+library(corrplot)
+library(FSA)
+library(rstatix)
+library(tidyverse)
+library(lmtest)
+library(dplyr)
+library(car)
+library(ggplot2)
+library(ggpubr)
+library(dunn.test)
+library(ggcorrplot)
+library(caret)
+```
+
+
+#Model regresji
+### Regresja wieloraka - jakość wina
+
+Opis danych
+Zestaw danych dotyczy jedenastu parametrów chemicznych odmian czerwonego wina z Portugalii, które zbadano, i dwunastego parametru - jakości wyliczanej na podstawie poprzednich parametrów. Nas będą interesować parametry chemiczne, nie jakość. Spróbujemy wśród nich znaleźć interesujących kandydatów na zmienną zależną i wykonać model regresji liniowej. Najpierw zaimportujemy dane i przyjrzymy się każdej kolumnie z osobna, poszukując danych odstających.
+
+```{r}
+wine <- read.csv('WineQT.csv',sep=',', dec='.')
+wine <- dplyr::select(wine, c(1:11))
+head(wine)
+summary(wine)
+```
+
+```{r}
+hist(wine$fixed.acidity)
+
+#ggplot(data = wine, mapping = aes(x = fixed.acidity)) + 
+#  geom_histogram(binwidth = 1)
+
+hist(wine$volatile.acidity)
+hist(wine$citric.acid)
+hist(wine$residual.sugar)
+hist(wine$chlorides)
+hist(wine$free.sulfur.dioxide)
+hist(wine$total.sulfur.dioxide)
+hist(wine$density)
+hist(wine$pH)
+hist(wine$sulphates)
+hist(wine$alcohol)
+```
+
+Większość histogramów zawiera odchyły, którym warto się przyjrzeć. Pozbędziemy się zbyt mocno odstających wartości - mogą one wynikać z błędów pomiarowych. Nie decydujemy się na usuwanie wszystkiego, co zostanie nam wskazane jako wartości odstające - skupiamy się na obserwacjach pojedynczych lub znajdujących się zbyt daleko od normalnych zakresów wartości parametrów.
+
+Przy usuwaniu wartości kierujemy się histogramem. Jeśli słupek jest bardzo niski i oddalony od innych to usuwamy wartości które go tworzą. 
+
+
+
+```{r}
+wine$volatile.acidity[wine$volatile.acidity %in% boxplot.stats(wine$volatile.acidity)$out]
+wine <- wine[! wine$volatile.acidity %in% c(1.33,1.09,1.58,1.18), ]
+
+```
+
+```{r}
+wine$citric.acid[wine$citric.acid %in% boxplot.stats(wine$citric.acid)$out]
+wine <- wine[! wine$citric.acid %in% c(1), ]
+```
+```{r}
+odst <- wine$residual.sugar[wine$residual.sugar %in% boxplot.stats(wine$residual.sugar)$out]
+odst
+odst <- odst[which(odst >9)]
+wine <- wine[! wine$residual.sugar %in% odst, ]
+
+```
+
+```{r}
+odst <- wine$chlorides[wine$chlorides %in% boxplot.stats(wine$chlorides)$out]
+odst
+odst <- odst[which(odst >0.3)]
+wine <- wine[! wine$chlorides %in% odst, ]
+hist(wine$chlorides)
+```
+```{r}
+odst <- wine$free.sulfur.dioxide[wine$free.sulfur.dioxide %in% boxplot.stats(wine$free.sulfur.dioxide)$out]
+odst
+odst <- odst[which(odst >65)]
+wine <- wine[! wine$free.sulfur.dioxide %in% odst, ]
+hist(wine$free.sulfur.dioxide)
+```
+
+```{r}
+odst <- wine$total.sulfur.dioxide[wine$total.sulfur.dioxide %in% boxplot.stats(wine$total.sulfur.dioxide)$out]
+odst
+odst <- odst[which(odst >150)]
+wine <- wine[! wine$total.sulfur.dioxide %in% odst, ]
+hist(wine$total.sulfur.dioxide)
+```
+
+```{r}
+odst <- wine$pH[wine$pH %in% boxplot.stats(wine$pH)$out]
+odst
+odst <- odst[which(odst >3.9)]
+wine <- wine[! wine$pH %in% odst, ]
+hist(wine$pH)
+```
+```{r}
+odst <- wine$sulphates[wine$sulphates %in% boxplot.stats(wine$sulphates)$out]
+odst
+odst <- odst[which(odst >1.2)]
+wine <- wine[! wine$sulphates %in% odst, ]
+hist(wine$sulphates)
+```
+
+```{r}
+odst <- wine$alcohol[wine$alcohol %in% boxplot.stats(wine$alcohol)$out]
+odst
+odst <- odst[which(odst >14)]
+wine <- wine[! wine$alcohol %in% odst, ]
+hist(wine$alcohol)
+```
+
+```{r}
+summary(wine)
+```
+
+Teraz możemy przystąpić do poszukiwania zmiennej, która może nas zainteresować jako zmienna objaśniana, a następnie do poszukiwania dla niej zmiennych objaśniających. Zrobimy to z pomocą macierzy korelacji.
+
+
+```{r}
+wine_cor <- cor(wine, y = NULL, method = c("pearson")) #szukamy zależności liniowej - z tego powodu stosujemy metodę Pearsona
+corrplot(wine_cor)
+```
+
+Może nas zainteresować zmienna density odpowiadająca za gęstość. Co prawda zmienne pH i citric.acid także mają kilka kandydatów na zmienne objaśniające, ale związek między pH i kwasami oraz kwasu cytrynowego z innymi kwasami oraz pH wydaje się dość oczywisty.
+
+Zmienna density ma wysoki poziom korelacji ze zmienną fixed.acidity, citric.acid, residual.sugar, chlorides, pH, alcohol. Jeśli wybralibyśmy jako jedną z nich fixed.acidity, musielibyśmy zrezygnować z citric.acid oraz pH. Jeśli wybieramy jako kandydata fixed.acidity, zostają nam residual.sugar, chlorides oraz alcohol. Residual.sugar nie wybija się znaczną korelacją z żadną ze zmiennych, tak samo chlorides i alcohol.
+
+Decydujemy wybrać fixed.acidity i zbadać trzy pozostałe zmienne. Przy okazji obejrzymy wykresy regresji prostej - głównie informacyjnie.
+
+
+
+```{r}
+ggplot(wine, aes(x=fixed.acidity, y=density)) + geom_point() +
+ labs(title="Zależność gęstości wina od kwasowości wina", x='Kwasowość', y = "Gęstość") + geom_smooth(method='lm' ,formula=y~x, se=FALSE)
+```
+
+
+```{r}
+ggplot(wine, aes(x=residual.sugar, y=density)) + geom_point() +
+ labs(title="Zależność gęstości wina od cukru resztkowego", x='Cukier resztkowy', y = "Gęstość") + geom_smooth(method='lm' ,formula=y~x, se=FALSE)
+```
+
+```{r}
+ggplot(wine, aes(x=chlorides, y=density)) + geom_point() +
+ labs(title="Zależność gęstości wina od chlorków", x='Chlorki', y = "Gęstość") + geom_smooth(method='lm' ,formula=y~x, se=FALSE)
+```
+
+```{r}
+ggplot(wine, aes(x=alcohol, y=density)) + geom_point() +
+ labs(title="Zależność gęstości wina od alkoholu", x='Alkohol', y = "Gęstość") + geom_smooth(method='lm' ,formula=y~x, se=FALSE)
+```
+Najbardziej obiecująca wydaje się zawartość alkoholu. Sprawdzimy teraz, jak wypada model regresji prostej i wielorakiej (ze zmienną alcohol).
+
+
+```{r}
+wine_model_simple <- lm(density ~ fixed.acidity, data = wine)
+summary(wine_model_simple)
+```
+#Założenia - regresja
+Sprawdźmy, czy model spełnia założenia:
+
+```{r}
+shapiro.test(wine_model_simple$residuals)
+```
+Test Shapiro-Wilka o  H0  mówiącej, że rozkład reszt jest zgodny z rozkładem normalnym, zwrócił p-value mniejsze od 0.05, co oznacza odrzucenie hipotezy zerowej. Niestety reszty nie mają rozkładu normalnego.
+
+
+```{r}
+t.test(wine_model_simple$residuals)
+```
+
+Średnia reszt modelu jest równa zeru.
+
+
+```{r}
+lmtest::dwtest(wine_model_simple)
+```
+Również test Durbina-Watsona przynosi negatywne wieści, ponieważ odrzucamy hipotezę zerową, według której reszty są niezależne.
+
+
+```{r}
+lmtest::bptest(wine_model_simple)
+```
+
+
+Z kolei test Breusch-Pagan daje p-value > 0.05, czyli nie mamy podstaw do odrzucenia hipotezy zerowej o homoskedastyczności reszt.
+
+Podsumowując, stworzony model regresji prostej nie spełnia istotnej części założeń, a  R2  wynosi 0.48, czyli tylko 48% wariancji danych jest wyjaśnione przez model.
+
+Sprawdzimy teraz model regresji wielorakiej, wybierając jako drugą zmienną alcohol.
+
+
+
+```{r}
+wine_model_multi <- lm(density ~ fixed.acidity + alcohol, data = wine)
+summary(wine_model_multi)
+```
+```{r}
+vif(wine_model_multi)
+```
+
+
+
+Współczynniki VIF są bardzo niskie, co wskazuje na to, że zmienne objaśniające są niezależne od siebie. Korelacja między nimi nie jest nieistotna statystycznie, ale jest dosyć niska. Przystąpimy do badania dalszych założeń.
+
+
+```{r}
+shapiro.test(wine_model_multi$residuals)
+```
+Niestety i w tym wypadku reszty modelu nie są normalne.
+
+```{r}
+t.test(wine_model_multi$residuals)
+```
+Tak jak poprzednio średnia reszt jest równa zeru.
+
+```{r}
+lmtest::dwtest(wine_model_multi)
+```
+Nie spełniamy również założeń o niezależności reszt.
+
+```{r}
+lmtest::bptest(wine_model_multi)
+```
+W przeciwieństwie do modelu regresji prostej, również założenie o homoskedastyczności upada.
+
+Model regresji wielorakiej ma wyższą wartość  R2  w porównaniu do modelu regresji prostej, ale spełnia o jedno założenie mniej. Brak spełnienia tych klasycznych założeń nie sprawia, że modele stają się zupełnie bezużyteczne, ale nie możemy w pełni zaufać ich wynikom.
